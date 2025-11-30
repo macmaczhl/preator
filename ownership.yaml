@@ -1,0 +1,12 @@
+version: 1
+ownership:
+  - name: preator
+    long_name: Preator GitHub App
+    description: Preator GitHub App
+    kind: code
+    maintainer: nebiyou-gebretatios
+    repo: https://github.com/macmaczhl/preator
+    sev3:
+      issue: https://github.com/macmaczhl/preator/issues
+    tier: 3
+    qos: experimental
