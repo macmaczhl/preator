@@ -3,6 +3,11 @@ import fs from 'fs'
 import http from 'http'
 import { Octokit, App } from 'octokit'
 import { createNodeMiddleware } from '@octokit/webhooks'
+import { handleCopilotPrGate } from './lib/handleCopilotPr.js'
+import {
+  DEFAULT_WIP_TITLE_PREFIX,
+  parseAuthorAllowlist
+} from './lib/prCopilotGate.js'
 
 // Load environment variables from .env file
 dotenv.config()
@@ -14,6 +19,8 @@ const privateKey = fs.readFileSync(privateKeyPath, 'utf8')
 const secret = process.env.WEBHOOK_SECRET
 const enterpriseHostname = process.env.ENTERPRISE_HOSTNAME
 const messageForNewPRs = fs.readFileSync('./message.md', 'utf8')
+const copilotAuthorAllowlist = parseAuthorAllowlist(process.env.COPILOT_PR_AUTHOR_LOGINS)
+const wipTitlePrefix = process.env.WIP_TITLE_PREFIX ?? DEFAULT_WIP_TITLE_PREFIX
 
 // Create an authenticated Octokit client authenticated as a GitHub App
 const app = new App({
@@ -35,9 +42,28 @@ const { data } = await app.octokit.request('/app')
 // Read more about custom logging: https://github.com/octokit/core.js#logging
 app.octokit.log.debug(`Authenticated as '${data.name}'`)
 
-// Subscribe to the "pull_request.opened" webhook event
+const copilotGateOptions = {
+  wipPrefix: wipTitlePrefix,
+  authorAllowlist: copilotAuthorAllowlist
+}
+
+async function runCopilotPrGate ({ octokit, payload }) {
+  try {
+    await handleCopilotPrGate(octokit, payload, copilotGateOptions)
+  } catch (error) {
+    if (error.response) {
+      console.error(
+        `Copilot PR gate error: ${error.response.status}. Message: ${error.response.data.message}`
+      )
+    } else {
+      console.error(error)
+    }
+  }
+}
+
+// Welcome message on open (all PRs)
 app.webhooks.on('pull_request.opened', async ({ octokit, payload }) => {
-  console.log(`Received a pull request event for #${payload.pull_request.number}`)
+  console.log(`Received pull_request.opened for #${payload.pull_request.number}`)
   try {
     await octokit.rest.issues.createComment({
       owner: payload.repository.owner.login,
@@ -52,6 +78,17 @@ app.webhooks.on('pull_request.opened', async ({ octokit, payload }) => {
       console.error(error)
     }
   }
+  await runCopilotPrGate({ octokit, payload })
+})
+
+app.webhooks.on('pull_request.edited', async ({ octokit, payload }) => {
+  console.log(`Received pull_request.edited for #${payload.pull_request.number}`)
+  await runCopilotPrGate({ octokit, payload })
+})
+
+app.webhooks.on('pull_request.synchronize', async ({ octokit, payload }) => {
+  console.log(`Received pull_request.synchronize for #${payload.pull_request.number}`)
+  await runCopilotPrGate({ octokit, payload })
 })
 
 // Optional: Handle errors
